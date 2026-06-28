@@ -1,0 +1,17 @@
+[book]
+title = "YXG 编译器开发指南"
+authors = ["你的名字"]
+language = "zh-CN"
+src = "src"
+
+[output.html]
+mathjax-support = false
+copy-fonts = true
+site-url = "/yxg-compiler-book/"
+git-repository-url = "https://github.com/yxyssg/yxg_language"
+edit-url-template = "https://github.com/yxyssg/yxg_language/edit/main/docs/{path}"
+
+[output.html.print]
+enable = true
+
+[preprocessor]
