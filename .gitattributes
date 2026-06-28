@@ -1,0 +1,12 @@
+# 源码文件统一 LF
+*.c    text eol=lf
+*.h    text eol=lf
+*.asm text eol=crlf
+*.yxg  text eol=lf
+
+# Makefile 必须用 tab
+Makefile text eol=lf
+
+# 二进制文件
+*.exe  binary
+*.obj  binary
