@@ -15,6 +15,9 @@ static LoopContext* ctx_stack = NULL;
 static int ctx_top = -1;
 static int ctx_capacity = 0;
 
+static AST_Function*  current_ir_function       = NULL;
+static char*          current_ir_ret_ptr        = NULL;
+
 int assign_def_id(IR* ir) {
     if (!ir) return -1;
     ir->def_id = ++global_def_id;
@@ -30,6 +33,14 @@ int get_def_id_by_name(const char* name, IR* head, IR* stop_before) {
         }
     }
     return found ? found->def_id : -1;
+}
+
+static IR* chain_append(IR* head, IR* ir) {
+    if (head == NULL) return ir;
+    IR* p = head;
+    while (p->next) p = p->next;
+    p->next = ir;
+    return head;
 }
 
 static void push_context(const char* break_lbl, const char* continue_lbl) {
@@ -363,7 +374,7 @@ IR_OP_Type Type_TO_OP(TokenType type, bool is_unsigned) {
     }
 }
 
-int get_type_size(DataType type) {
+static int get_type_size(DataType type) {
     switch (type) {
     case DATA_CHAR:
     case DATA_BOOL:   return 1;
@@ -397,22 +408,38 @@ static IR* gen_array_access_ir(AST_ArrayAccess* acc, bool gen_load, char** addr_
 
         if (acc->full_dim_sizes != NULL && d < acc->full_dim_count) {
             int dim = acc->full_dim_sizes[d];
-            char dimStr[16];
-            sprintf(dimStr, "%d", dim);
 
-            IR* dim_lit = create_IR(IR_LITERAL);
-            dim_lit->args1 = strdup(dimStr);
-            dim_lit->args1_type = DATA_INT;
-            dim_lit->data_type = DATA_INT;
-            dim_lit->result = create_temp();
-            assign_def_id(dim_lit);
-            chain = connect_IR(chain, dim_lit);
+            if (dim > 0) {
+                char dimStr[16];
+                sprintf(dimStr, "%d", dim);
 
-            IR* check = create_IR(IR_BOUNDS_CHECK);
-            check->args1 = strdup(idx_val);
-            check->args2 = strdup(dim_lit->result);
-            check->data_type = DATA_INT;
-            chain = connect_IR(chain, check);
+                IR* dim_lit = create_IR(IR_LITERAL);
+                dim_lit->args1 = strdup(dimStr);
+                dim_lit->args1_type = DATA_INT;
+                dim_lit->data_type = DATA_INT;
+                dim_lit->result = create_temp();
+                assign_def_id(dim_lit);
+                chain = connect_IR(chain, dim_lit);
+
+                IR* check = create_IR(IR_BOUNDS_CHECK);
+                check->args1 = strdup(idx_val);
+                check->args2 = strdup(dim_lit->result);
+                check->data_type = DATA_INT;
+                chain = connect_IR(chain, check);
+            } else if (dim == -1 && d == 0) {
+                IR* len_ir = create_IR(IR_ARRAY_LENGTH);
+                len_ir->result = create_temp();
+                assign_def_id(len_ir);
+                len_ir->args1 = strdup(base_temp);
+                len_ir->data_type = DATA_INT;
+                chain = connect_IR(chain, len_ir);
+
+                IR* check = create_IR(IR_BOUNDS_CHECK);
+                check->args1 = strdup(idx_val);
+                check->args2 = strdup(len_ir->result);
+                check->data_type = DATA_INT;
+                chain = connect_IR(chain, check);
+            }
         }
 
         if (d == 0) {
@@ -784,8 +811,54 @@ IR* generate_IR(ASTNode* ast_node)
                 arg_count++;
             }
 
+            bool callee_returns_array = false;
+            char* callee_ret_buf = NULL;
+            int callee_ret_total_bytes  = 0;
+
+            if (callee_returns_array && callee_ret_total_bytes > 0)
+            {
+                callee_ret_buf = create_temp();
+                IR* alloc = create_IR(IR_ALLOC_ARRAY);
+                alloc->result     = strdup(callee_ret_buf);
+                alloc->args1      = strdup("1");
+                alloc->args1_type = DATA_INT;
+                alloc->elem_size  = callee_ret_total_bytes;
+                alloc->data_type  = DATA_INT;
+                assign_def_id(alloc);
+                if (calc_last) {
+                    calc_last->next = alloc;
+                    calc_last       = alloc;
+                } else {
+                    calc_chain = alloc;
+                    calc_last  = alloc;
+                }
+            }
             IR* push_chain = NULL;
             IR* push_last = NULL;
+
+            if (callee_returns_array && callee_ret_buf)
+            {
+                IR* push_hidden = create_IR(IR_PUSH);
+                push_hidden->args1      = strdup(callee_ret_buf);
+                push_hidden->args1_type = DATA_INT;
+                push_hidden->next       = NULL;
+                push_chain = push_hidden;
+                push_last  = push_hidden;
+                char**  new_temps = malloc((size_t)(arg_count + 1) * sizeof(char*));
+                DataType* new_types = malloc((size_t)(arg_count + 1) * sizeof(DataType));
+                new_temps[0] = strdup(callee_ret_buf);
+                new_types[0] = DATA_INT;
+                for (int i = 0; i < arg_count; i++) {
+                    new_temps[i + 1] = arg_temps[i];
+                    new_types[i + 1] = arg_types[i];
+                }
+                free(arg_temps);
+                free(arg_types);
+                arg_temps = new_temps;
+                arg_types = new_types;
+                arg_count++;
+            }
+
             for (int i = arg_count - 1; i >= 0; i--) {
                 IR* push_ir = create_IR(IR_PUSH);
                 push_ir->args1 = strdup(arg_temps[i]);
@@ -1320,6 +1393,30 @@ IR* generate_IR(ASTNode* ast_node)
             {
             AST_ArrayDecl* arr = (AST_ArrayDecl*)ast_node;
 
+            bool all_dynamic = (arr->dim_count > 0);
+            for (int i = 0; i < arr->dim_count; i++) {
+                if (arr->dim_sizes[i] > 0) { all_dynamic = false; break; }
+            }
+
+            if (all_dynamic) {
+                if (arr->init_list != NULL) {
+                    IR* init_ir = generate_IR(arr->init_list);
+                    IR* last = init_ir;
+                    while (last->next) last = last->next;
+                    IR* var_ir = create_IR(IR_VAR);
+                    var_ir->result = strdup(arr->internal_name);
+                    var_ir->args1 = strdup(last->result);
+                    var_ir->args1_type = last->data_type;
+                    var_ir->data_type = DATA_INT;
+                    return chain_append(init_ir, var_ir);
+                } else {
+                    IR* var_ir = create_IR(IR_VAR_UNINIT);
+                    var_ir->result = strdup(arr->internal_name);
+                    var_ir->data_type = DATA_INT;
+                    return var_ir;
+                }
+            }
+
             int total_elements = 1;
             for (int i = 0; i < arr->dim_count; i++) {
                 if (arr->dim_sizes[i] > 0)
@@ -1444,20 +1541,60 @@ IR* generate_IR(ASTNode* ast_node)
     case AST_NEW_ARRAY:
         {
             AST_NewArray* narr = (AST_NewArray*)ast_node;
-            int total_elements = 1;
-            for (int i = 0; i < narr->dim_count; i++)
-                total_elements *= narr->dim_sizes[i];
+            IR* chain = NULL;
+            char* total_temp = NULL;
+
+            for (int i = 0; i < narr->dim_count; i++) {
+                char* dim_temp = NULL;
+
+                if (narr->dim_sizes[i] > 0) {
+                    IR* lit = create_IR(IR_LITERAL);
+                    lit->result = create_temp();
+                    assign_def_id(lit);
+                    char buf[16];
+                    sprintf(buf, "%d", narr->dim_sizes[i]);
+                    lit->args1 = strdup(buf);
+                    lit->args1_type = DATA_INT;
+                    lit->data_type = DATA_INT;
+                    chain = chain_append(chain, lit);
+                    dim_temp = lit->result;
+                } else if (narr->dim_exprs[i] != NULL) {
+                    IR* expr_ir = generate_IR(narr->dim_exprs[i]);
+                    IR* last = expr_ir;
+                    while (last->next) last = last->next;
+                    chain = chain_append(chain, expr_ir);
+                    dim_temp = last->result;
+                } else {
+                    INTERNAL_ERROR("IR: new array dim %d has no size", i);
+                }
+
+                if (i == 0) {
+                    total_temp = dim_temp;
+                } else {
+                    IR* mul = create_IR(IR_BINARY);
+                    mul->op = IR_MUL;
+                    mul->args1 = strdup(total_temp);
+                    mul->args1_type = DATA_INT;
+                    mul->args2 = strdup(dim_temp);
+                    mul->args2_type = DATA_INT;
+                    mul->result = create_temp();
+                    assign_def_id(mul);
+                    mul->data_type = DATA_INT;
+                    chain = chain_append(chain, mul);
+                    total_temp = mul->result;
+                }
+            }
 
             IR* alloc_ir = create_IR(IR_ALLOC_ARRAY);
             alloc_ir->result = create_temp();
             assign_def_id(alloc_ir);
-            char cnt_str[16];
-            sprintf(cnt_str, "%d", total_elements);
-            alloc_ir->args1 = strdup(cnt_str);
+            alloc_ir->args1 = strdup(total_temp ? total_temp : "1");
             alloc_ir->args1_type = DATA_INT;
             alloc_ir->elem_size = get_type_size(narr->elementType);
             alloc_ir->data_type = DATA_INT;
-            return alloc_ir;
+            chain = chain_append(chain, alloc_ir);
+
+            return chain;
         }
 
     case AST_ARRAY_LENGTH:
@@ -2266,6 +2403,11 @@ IR* generate_IR(ASTNode* ast_node)
             temp_i = 0;
             label_i = 0;
 
+            AST_Function* saved_ir_func = current_ir_function;
+            char*         saved_ret_ptr = current_ir_ret_ptr;
+            current_ir_function = (AST_Function*)ast_node;
+            current_ir_ret_ptr  = NULL;
+
             AST_Function* ast_function = (AST_Function*)ast_node;
 
             int func_local_count = count_local_vars(ast_function->Code);
@@ -2281,6 +2423,25 @@ IR* generate_IR(ASTNode* ast_node)
             IR* param_chain = NULL;
             IR* last_param = NULL;
             ASTNode* param_node = ast_function->Parameter;
+            if (ast_function->returns_array)
+            {
+                bool all_dynamic = true;
+                for (int i = 0; i < ast_function->return_dim_count; i++) {
+                    if (ast_function->return_dim_sizes[i] > 0) {
+                        all_dynamic = false;
+                        break;
+                    }
+                }
+                if (!all_dynamic) {
+                    current_ir_ret_ptr = create_temp();
+                    IR* hidden_param = create_IR(IR_PARAM_DEF);
+                    hidden_param->result    = strdup(current_ir_ret_ptr);
+                    hidden_param->data_type = DATA_INT;
+                    hidden_param->next      = NULL;
+                    start_function_ir->next = hidden_param;
+                    func_entry->func_local_count++;
+                }
+            }
             while (param_node) {
                 char* internal_name = NULL;
                 DataType param_type = DATA_ERROR;
@@ -2345,6 +2506,8 @@ IR* generate_IR(ASTNode* ast_node)
 
             label_i = saved_label_i;
             temp_i = saved_temp_i;
+            current_ir_function = saved_ir_func;
+            current_ir_ret_ptr  = saved_ret_ptr;
 
             return full_chain;
         }
@@ -2594,6 +2757,65 @@ IR* generate_IR(ASTNode* ast_node)
 
     case AST_RETURN:
         AST_Return* ast_ret = (AST_Return*)ast_node;
+
+        if (current_ir_function && current_ir_function->returns_array &&
+            current_ir_ret_ptr != NULL)
+        {
+            if (ast_ret->value == NULL)
+            {
+                INTERNAL_ERROR("IR: array-returning function has NULL return value");
+                return NULL;
+            }
+            IR* val_ir = generate_IR(ast_ret->value);
+            if (!val_ir) return NULL;
+            IR* val_last = val_ir;
+            while (val_last->next != NULL)
+                val_last = val_last->next;
+            char* src_ptr = val_last->result;
+
+            int total_bytes = 1;
+            AST_Function* func = current_ir_function;
+            for (int i = 0; i < func->return_dim_count; i++)
+            {
+                if (func->return_dim_sizes[i] > 0)
+                    total_bytes *= func->return_dim_sizes[i];
+                else
+                    total_bytes *= 1;
+            }
+            total_bytes *= get_type_size(func->return_element_type);
+
+            IR* copy = create_IR(IR_COPY_BLOCK);
+            copy->args1 = strdup(current_ir_ret_ptr);
+            copy->args1_type = DATA_INT;
+            copy->args2 = strdup(src_ptr);
+            copy->args2_type = DATA_INT;
+            char sz_buf[32];
+            snprintf(sz_buf, sizeof(sz_buf), "%d", total_bytes);
+            copy->result = strdup(sz_buf);
+            copy->data_type = DATA_INT;
+            assign_def_id(copy);
+
+            IR* ret_ir = create_IR(IR_RET);
+            if (ast_ret->value != NULL) {
+                IR* val_ir = generate_IR(ast_ret->value);
+                IR* last = val_ir;
+                while (last->next) last = last->next;
+                ret_ir->args1 = strdup(last->result);
+                ret_ir->has_return = true;
+                ret_ir->data_type = ast_ret->returnType;
+                return connect_IR(val_ir, ret_ir);
+            } else {
+                ret_ir->has_return = false;
+                ret_ir->data_type = ast_ret->returnType;
+                return ret_ir;
+            }
+            ret_ir->data_type  = DATA_VOID;
+
+            IR* chain = connect_IR(val_ir, copy);
+            chain = connect_IR(chain, ret_ir);
+            return chain;
+        }
+
         IR* ret_ir = create_IR(IR_RET);
         if (ast_ret->value != NULL) {
             IR* val_ir = generate_IR(ast_ret->value);
@@ -2809,6 +3031,10 @@ void print_IR(IR* ir) {
             break;
         case IR_BOUNDS_CHECK:
             printf("BoundsCheck: %s < %s\n", temp->args1, temp->args2);
+            break;
+        case IR_COPY_BLOCK:
+            printf("CopyBlock: [%s] ¡û [%s], %s bytes\n",
+                   temp->args1, temp->args2, temp->result);
             break;
         case IR_BITWISE_NOT:
             printf("BitwiseNOT(def:%d): %s = ~%s (type:%d)\n", temp->def_id, temp->result, temp->args1, temp->data_type);

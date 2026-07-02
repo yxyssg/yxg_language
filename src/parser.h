@@ -40,7 +40,7 @@ ASTNode* parser_break(Parser* parser);
 ASTNode* parser_continue(Parser* parser);
 ASTNode* parser_if(Parser* parser);
 ASTNode* parser_def_var(Parser* parser);
-ASTNode* parser_var(Parser* parser);
+ASTNode* parser_var(Parser* parser, bool allow_multi_decl);
 ASTNode* parser_input(Parser* parser);
 ASTNode* parser_Binary(Parser* parser);
 ASTNode* parser_Unary(Parser* parser);

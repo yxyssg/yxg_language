@@ -41,6 +41,8 @@ typedef enum IRTYPE
 
     IR_BOUNDS_CHECK,
 
+    IR_COPY_BLOCK,
+
     IR_ERROR,
 }IRType;
 
@@ -125,7 +127,7 @@ IR* start_generate_IR(ASTNode* ast_node);
 IR* parse_IR(ASTNode* ast_node);
 void print_IR(IR* ir);
 IR* create_IR(IRType ir_type);
-int get_type_size(DataType type);
+static int get_type_size(DataType type);
 void free_IR_chain(IR* ir);
 int  assign_def_id(IR* ir);
 int  get_def_id_by_name(const char* name, IR* head, IR* stop_before);

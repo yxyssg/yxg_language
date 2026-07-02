@@ -1300,6 +1300,7 @@ void codegen_win32(FILE* output,IR* ir)
                 fprintf(output, "  push eax\n");
                 fprintf(output, "  call _gc_alloc\n");
                 fprintf(output, "  add esp, 4\n");
+                fprintf(output, "  mov edx, eax\n");
                 if (is_number(size_val)) {
                     fprintf(output, "  mov ebx, %s\n", size_val);
                 } else if (is_temp(size_val)) {
@@ -1309,8 +1310,8 @@ void codegen_win32(FILE* output,IR* ir)
                     cg_load(output, size_val, DATA_INT);
                     fprintf(output, "  mov ebx, eax\n");
                 }
-                fprintf(output, "  mov [eax], ebx\n");
-                fprintf(output, "  add eax, 4\n");
+                fprintf(output, "  mov [edx], ebx\n");
+                fprintf(output, "  lea eax, [edx + 4]\n");
                 cg_store(output, ir_temp->result, DATA_INT, false);
                 has_memory_lib = true;
                 has_gc = true;
@@ -1319,7 +1320,15 @@ void codegen_win32(FILE* output,IR* ir)
 
         case IR_ARRAY_LENGTH: {
                 char* arr_name = ir_temp->args1;
-                int result_offset = (atoi(ir_temp->result + 2) + 1) * 4;
+
+                if (is_temp(arr_name)) {
+                    int off = (atoi(arr_name + 2) + 1) * 4;
+                    fprintf(output, "  mov eax, dword [ebp-%d]\n", off);
+                    fprintf(output, "  mov eax, [eax - 4]\n");
+                    cg_store(output, ir_temp->result, DATA_INT, false);
+                    has_memory_lib = true;
+                    break;
+                }
 
                 int idx = get_const(arr_name);
                 if (idx == -1) {
@@ -2446,6 +2455,33 @@ void codegen_win32(FILE* output,IR* ir)
                 fprintf(output, "  jl _array_bounds_error\n");
 
                 has_bounds_check = true;
+                break;
+            }
+        case IR_COPY_BLOCK:
+            {
+                char* dst_ptr = ir_temp->args1;
+                char* src_ptr = ir_temp->args2;
+                int byte_count = atoi(ir_temp->result);
+
+                cg_load(output, dst_ptr, DATA_INT);
+                fprintf(output, "  mov edi, eax\n");
+
+                cg_load(output, src_ptr, DATA_INT);
+                fprintf(output, "  mov esi, eax\n");
+
+                int dwords = (byte_count + 3) / 4;
+                if (dwords > 0)
+                {
+                    fprintf(output, "  mov ecx, %d\n", dwords);
+                    fprintf(output, "  cld\n");
+                    fprintf(output, "  rep movsd\n");
+                }
+                int remainder = byte_count % 4;
+                if (remainder > 0)
+                {
+                    fprintf(output, "  mov ecx, %d\n", remainder);
+                    fprintf(output, "  rep movsb\n");
+                }
                 break;
             }
         case IR_PHI:

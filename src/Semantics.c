@@ -29,6 +29,8 @@ static char* current_class_name = NULL;
 
 static TypeAlias* type_aliases = NULL;
 
+static AST_Function* current_analyzing_function = NULL;
+
 static void add_type_alias(const char* name, DataType actual_type) {
     TypeAlias* alias = malloc(sizeof(TypeAlias));
     alias->name = strdup(name);
@@ -250,6 +252,11 @@ static int inherit_from_parent(ClassEntry* child, ClassEntry* parent, int offset
 
 static bool types_compatible(DataType declared, DataType actual) {
     if (declared == actual) return true;
+
+    if (declared == DATA_IDENTIFIER && (actual == DATA_INT || actual == DATA_UINT))
+        return true;
+    if (actual == DATA_IDENTIFIER && (declared == DATA_INT || declared == DATA_UINT))
+        return true;
 
     if (declared == DATA_IDENTIFIER || actual == DATA_IDENTIFIER) return true;
 
@@ -1348,6 +1355,19 @@ static void predeclare_all_types(ASTNode* node) {
     }
 }
 
+static int get_type_size(DataType type) {
+    switch (type) {
+    case DATA_CHAR:
+    case DATA_BOOL:   return 1;
+    case DATA_INT:
+    case DATA_UINT:
+    case DATA_FLOAT:
+    case DATA_UFLOAT:
+    case DATA_STRING: return 4;
+    default:          return 4;
+    }
+}
+
 static void resolve_class_members(AST_ClassDef* cd, ClassEntry* cls) {
     if (cls->members_resolved) return;
 
@@ -1388,17 +1408,14 @@ static void resolve_class_members(AST_ClassDef* cd, ClassEntry* cls) {
 
         Symbol* field_sym = create_symbol(
             (Token){.value = mi->name, .type = TOKEN_IDENTIFIER},
-            mi->type,
-            mi->name,
-            strdup(mi->name)
-        );
+            mi->type, mi->name, strdup(mi->name));
         field_sym->is_field = true;
         field_sym->field_offset = mi->offset;
         field_sym->field_modifier = mi->field_modifier;
         insert_symbol(field_sym);
     }
 
-    ClassEntry** parent_entries = malloc(sizeof(ClassEntry*) * cd->parent_count);
+    ClassEntry** parent_entries = malloc(sizeof(ClassEntry*) * (size_t)cd->parent_count);
     bool all_parents_valid = true;
     for (int i = 0; i < cd->parent_count; i++) {
         parent_entries[i] = find_class(cd->parent_names[i]);
@@ -1419,176 +1436,283 @@ static void resolve_class_members(AST_ClassDef* cd, ClassEntry* cls) {
         }
     }
 
+    int mcount = 0;
+    for (ASTNode* n = cd->members; n; n = n->next) mcount++;
+
+    ASTNode** marray = malloc(sizeof(ASTNode*) * (size_t)(mcount + 1));
+    if (!marray) OUT_OF_MEMORY();
     {
-        ASTNode* m = cd->members;
-        while (m) {
-            if (m->type == AST_VAR || m->type == AST_UNINIT_VAR) {
-                AST_Var* var = (AST_Var*)m;
-
-                char* internal = generate_internal_name();
-                var->dataType = Get_Datatype(var->type);
-                Symbol* sym = create_symbol(var->name, var->dataType,
-                                            var->name.value, internal);
-                if (strcmp(var->name.value, "this") == 0 && current_class_name != NULL)
-                    sym->class_name = strdup(current_class_name);
-                insert_symbol(sym);
-                var->internal_name = strdup(internal);
-                free(internal);
-
-                bool field_conflict = false;
-                for (int j = 0; j < cls->member_count; j++) {
-                    if (!cls->members[j]->is_method &&
-                        strcmp(cls->members[j]->name, var->name.value) == 0) {
-                        ERROR(ERR_SEM_DUPLICATE_VAR,
-                              SEMLOC(var->name),
-                              "field '%s' conflicts with inherited field",
-                              var->name.value);
-                        field_conflict = true;
-                        break;
-                    }
-                }
-                if (field_conflict) { m = m->next; continue; }
-
-                DataType dt = var->dataType;
-                int sz = S_get_type_size(dt);
-
-                if (cls->member_count >= cls->member_capacity) {
-                    cls->member_capacity = cls->member_capacity ? cls->member_capacity * 2 : 8;
-                    cls->members = realloc(cls->members,
-                                           sizeof(MemberInfo*) * cls->member_capacity);
-                }
-                MemberInfo* mi = calloc(1, sizeof(MemberInfo));
-                mi->name = strdup(var->name.value);
-                mi->type = dt;
-                mi->is_method = false;
-                mi->offset = off;
-                mi->inherited_from = NULL;
-                mi->field_modifier = var->modifier;
-                if (var->Value != NULL) {
-                    if (var->Value->type == AST_LITERAL) {
-                        AST_Literal* lit = (AST_Literal*)var->Value;
-                        mi->init_value_str = strdup(lit->base.value.value);
-                    } else if (var->Value->type == AST_UNARY) {
-                        AST_Unary* un = (AST_Unary*)var->Value;
-                        if (un->op.type == TOKEN_SUB && un->right != NULL
-                            && un->right->type == AST_LITERAL) {
-                            AST_Literal* lit = (AST_Literal*)un->right;
-                            int len = strlen(lit->base.value.value) + 3;
-                            mi->init_value_str = malloc(len);
-                            snprintf(mi->init_value_str, len, "-%s",
-                                     lit->base.value.value);
-                            }
-                    }
-                }
-                cls->members[cls->member_count++] = mi;
-
-                Symbol* field_sym = lookup_symbol(var->name.value);
-                if (field_sym) {
-                    field_sym->is_field = true;
-                    field_sym->field_offset = off;
-                    field_sym->field_modifier = var->modifier;
-                }
-                off += sz;
-
-                if (var->modifier == 2) {
-                    DataType dt = var->dataType;
-                    const char* fname = var->name.value;
-                    int off_val = mi->offset;
-                    AST_Function* getter = create_getter_ast(cd->name, fname, dt, off_val);
-                    AST_Function* setter = create_setter_ast(cd->name, fname, dt, off_val);
-                    ASTNode* saved_next = m->next;
-                    getter->base.next = (ASTNode*)setter;
-                    setter->base.next = saved_next;
-                    m->next = (ASTNode*)getter;
-                    m = saved_next;
-                    continue;
-                }
-            }
-            m = m->next;
+        int i = 0;
+        ASTNode* n = cd->members;
+        while (n) {
+            ASTNode* saved_next = n->next;
+            n->next = NULL;
+            marray[i++] = n;
+            n = saved_next;
         }
+        marray[mcount] = NULL;
     }
 
-    {
-        ASTNode* m = cd->members;
-        while (m) {
-            if (m->type == AST_FUNCTION) {
-                AST_Function* func = (AST_Function*)m;
+    ASTNode* extra_head = NULL;
+    ASTNode* extra_tail = NULL;
 
-                AST_Var* this_param = calloc(1, sizeof(AST_Var));
-                this_param->base.type = AST_VAR;
-                this_param->base.value = (Token){.value = "this", .type = TOKEN_IDENTIFIER};
-                this_param->type = TOKEN_IDENTIFIER;
-                this_param->name = (Token){.value = "this", .type = TOKEN_IDENTIFIER};
-                this_param->dataType = DATA_IDENTIFIER;
-                this_param->internal_name = strdup("_this");
-                this_param->base.next = func->Parameter;
-                func->Parameter = (ASTNode*)this_param;
-                func->parameterCount++;
+    #define APPEND_EXTRA(node) do {            \
+        (node)->next = NULL;                   \
+        if (!extra_head) {                      \
+            extra_head = extra_tail = (node);   \
+        } else {                                \
+            extra_tail->next = (node);          \
+            extra_tail = (node);                \
+        }                                       \
+    } while(0)
 
-                DataType* new_types = malloc(sizeof(DataType) * func->parameterCount);
-                new_types[0] = DATA_IDENTIFIER;
-                if (func->parameterCount > 1)
-                    memcpy(new_types + 1, func->parameterType,
-                           sizeof(DataType) * (func->parameterCount - 1));
-                free(func->parameterType);
-                func->parameterType = new_types;
+    for (int mi = 0; mi < mcount; mi++) {
+        ASTNode* m = marray[mi];
+        if (!m) continue;
 
-                if (!func->internal_name) {
-                    func->internal_name = generate_method_mangled_name(cd->name, func);
+        if (m->type == AST_VAR || m->type == AST_UNINIT_VAR) {
+            AST_Var* var = (AST_Var*)m;
+
+            char* saved_class_name_field = NULL;
+            if (var->internal_name != NULL) {
+                saved_class_name_field = strdup(var->internal_name);
+            }
+
+            char* internal = generate_internal_name();
+            var->dataType = Get_Datatype(var->type);
+            Symbol* sym = create_symbol(var->name, var->dataType,
+                                        var->name.value, internal);
+
+            if (saved_class_name_field != NULL) {
+                ClassEntry* cls_entry = find_class(saved_class_name_field);
+                if (cls_entry) {
+                    sym->class_name = strdup(saved_class_name_field);
                 }
+            }
+            insert_symbol(sym);
+            var->internal_name = strdup(internal);
+            free(internal);
 
-                for (int j = 0; j < cls->member_count; j++) {
-                    if (cls->members[j]->is_method &&
-                        strcmp(cls->members[j]->name, func->name.value) == 0) {
-                        if (function_signature_identical(cls->members[j]->func, func)) {
-                            ERROR(ERR_SEM_DUPLICATE_VAR,
-                                  SEMLOC(func->name),
-                                  "duplicate method '%s'",
-                                  func->name.value);
-                        } else if (function_signature_conflict(cls->members[j]->func, func)) {
-                            ERROR(ERR_SEM_DUPLICATE_VAR,
-                                  SEMLOC(func->name),
-                                  "duplicate method '%s'",
-                                  func->name.value);
+            bool field_conflict = false;
+            for (int j = 0; j < cls->member_count; j++) {
+                if (!cls->members[j]->is_method &&
+                    strcmp(cls->members[j]->name, var->name.value) == 0) {
+                    ERROR(ERR_SEM_DUPLICATE_VAR,
+                          SEMLOC(var->name),
+                          "field '%s' conflicts with inherited field",
+                          var->name.value);
+                    field_conflict = true;
+                    break;
+                }
+            }
+            if (field_conflict) {
+                free(saved_class_name_field);
+                continue;
+            }
+
+            DataType dt = var->dataType;
+            int sz = S_get_type_size(dt);
+
+            if (cls->member_count >= cls->member_capacity) {
+                cls->member_capacity = cls->member_capacity ? cls->member_capacity * 2 : 8;
+                cls->members = realloc(cls->members,
+                                       sizeof(MemberInfo*) * (size_t)cls->member_capacity);
+            }
+
+            MemberInfo* mem_info = calloc(1, sizeof(MemberInfo));
+            mem_info->name = strdup(var->name.value);
+            mem_info->type = dt;
+            mem_info->is_method = false;
+            mem_info->offset = off;
+            mem_info->inherited_from = NULL;
+            mem_info->field_modifier = var->modifier;
+            mem_info->field_class_name = saved_class_name_field
+                                   ? strdup(saved_class_name_field) : NULL;
+
+            if (dt == DATA_IDENTIFIER && var->internal_name != NULL) {
+                ClassEntry* field_cls = find_class(var->internal_name);
+                if (field_cls) {
+                    free(mem_info->field_class_name);
+                    mem_info->field_class_name = strdup(var->internal_name);
+                }
+            }
+
+            if (var->Value != NULL) {
+                if (var->Value->type == AST_LITERAL) {
+                    AST_Literal* lit = (AST_Literal*)var->Value;
+                    if (lit->base.type == AST_LITERAL &&
+                        lit->base.value.value != NULL) {
+                        mem_info->init_value_str = strdup(lit->base.value.value);
+                    }
+                } else if (var->Value->type == AST_UNARY) {
+                    AST_Unary* un = (AST_Unary*)var->Value;
+                    if (un->op.type == TOKEN_SUB &&
+                        un->right != NULL &&
+                        un->right->type == AST_LITERAL) {
+                        AST_Literal* lit = (AST_Literal*)un->right;
+                        if (lit->base.type == AST_LITERAL &&
+                            lit->base.value.value != NULL) {
+                            int len = (int)strlen(lit->base.value.value) + 3;
+                            mem_info->init_value_str = malloc((size_t)len);
+                            if (mem_info->init_value_str)
+                                snprintf(mem_info->init_value_str, (size_t)len,
+                                         "-%s", lit->base.value.value);
                         }
                     }
                 }
+            }
 
-                add_function_with_params(func->name.value, func);
+            cls->members[cls->member_count++] = mem_info;
 
-                if (cls->member_count >= cls->member_capacity) {
-                    cls->member_capacity = cls->member_capacity ? cls->member_capacity * 2 : 8;
-                    cls->members = realloc(cls->members,
-                                           sizeof(MemberInfo*) * cls->member_capacity);
+            Symbol* field_sym = lookup_symbol(var->name.value);
+            if (field_sym) {
+                field_sym->is_field = true;
+                field_sym->field_offset = off;
+                field_sym->field_modifier = var->modifier;
+            }
+            off += sz;
+
+            if (var->modifier == 2) {
+                const char* fname = var->name.value;
+                int off_val = mem_info->offset;
+
+                char* gname = make_getter_name(fname);
+                char* sname = make_setter_name(fname);
+
+                bool has_getter = false;
+                bool has_setter = false;
+                for (int j = 0; j < cls->member_count; j++) {
+                    if (cls->members[j]->is_method) {
+                        if (strcmp(cls->members[j]->name, gname) == 0)
+                            has_getter = true;
+                        if (strcmp(cls->members[j]->name, sname) == 0)
+                            has_setter = true;
+                    }
                 }
-                MemberInfo* mi = calloc(1, sizeof(MemberInfo));
-                mi->name = strdup(func->name.value);
-                mi->type = func->Return ? func->Return->returnType : DATA_VOID;
-                mi->is_method = true;
-                mi->func = func;
-                mi->offset = -1;
-                mi->inherited_from = NULL;
-                cls->members[cls->member_count++] = mi;
 
-                if (strcmp(func->name.value, cd->name) == 0) {
-                    cls->constructor = func;
+                for (int j = mi + 1; j < mcount; j++) {
+                    ASTNode* mn = marray[j];
+                    if (mn && mn->type == AST_FUNCTION) {
+                        AST_Function* mf = (AST_Function*)mn;
+                        if (strcmp(mf->name.value, gname) == 0)
+                            has_getter = true;
+                        if (strcmp(mf->name.value, sname) == 0)
+                            has_setter = true;
+                    }
                 }
 
-                Symbol* func_sym = lookup_symbol(func->name.value);
-                if (!func_sym) {
-                    func_sym = calloc(1, sizeof(Symbol));
-                    func_sym->key = strdup(func->name.value);
-                    func_sym->value.type = TOKEN_IDENTIFIER;
-                    func_sym->value.value = strdup(func->name.value);
-                    func_sym->type = DATA_INT;
-                    func_sym->internal_name = strdup(func->internal_name);
-                    func_sym->is_function = false;
-                    insert_symbol(func_sym);
+                if (!has_getter) {
+                    AST_Function* getter = create_getter_ast(cd->name, fname, dt, off_val);
+                    if (getter) APPEND_EXTRA((ASTNode*)getter);
+                }
+                if (!has_setter) {
+                    AST_Function* setter = create_setter_ast(cd->name, fname, dt, off_val);
+                    if (setter) APPEND_EXTRA((ASTNode*)setter);
+                }
+
+                free(gname);
+                free(sname);
+            }
+
+            free(saved_class_name_field);
+        }
+
+        else if (m->type == AST_FUNCTION) {
+            AST_Function* func = (AST_Function*)m;
+
+            AST_Var* this_param = calloc(1, sizeof(AST_Var));
+            this_param->base.type = AST_VAR;
+            this_param->base.value = (Token){.value = "this", .type = TOKEN_IDENTIFIER};
+            this_param->type = TOKEN_IDENTIFIER;
+            this_param->name = (Token){.value = "this", .type = TOKEN_IDENTIFIER};
+            this_param->dataType = DATA_IDENTIFIER;
+            this_param->internal_name = strdup("_this");
+            this_param->base.next = func->Parameter;
+            func->Parameter = (ASTNode*)this_param;
+            func->parameterCount++;
+
+            DataType* new_types = malloc(sizeof(DataType) * (size_t)func->parameterCount);
+            new_types[0] = DATA_IDENTIFIER;
+            if (func->parameterCount > 1)
+                memcpy(new_types + 1, func->parameterType,
+                       sizeof(DataType) * (size_t)(func->parameterCount - 1));
+            free(func->parameterType);
+            func->parameterType = new_types;
+
+            if (!func->internal_name) {
+                func->internal_name = generate_method_mangled_name(cd->name, func);
+            }
+
+            for (int j = 0; j < cls->member_count; j++) {
+                if (cls->members[j]->is_method &&
+                    strcmp(cls->members[j]->name, func->name.value) == 0) {
+                    if (function_signature_identical(cls->members[j]->func, func)) {
+                        ERROR(ERR_SEM_DUPLICATE_VAR,
+                              SEMLOC(func->name),
+                              "duplicate method '%s'", func->name.value);
+                    } else if (function_signature_conflict(cls->members[j]->func, func)) {
+                        ERROR(ERR_SEM_DUPLICATE_VAR,
+                              SEMLOC(func->name),
+                              "duplicate method '%s'", func->name.value);
+                    }
                 }
             }
-            m = m->next;
+
+            if (cls->member_count >= cls->member_capacity) {
+                cls->member_capacity = cls->member_capacity ? cls->member_capacity * 2 : 8;
+                cls->members = realloc(cls->members,
+                                       sizeof(MemberInfo*) * (size_t)cls->member_capacity);
+            }
+            MemberInfo* mi = calloc(1, sizeof(MemberInfo));
+            mi->name = strdup(func->name.value);
+            mi->type = func->Return ? func->Return->returnType : DATA_VOID;
+            mi->is_method = true;
+            mi->func = func;
+            mi->offset = -1;
+            mi->inherited_from = NULL;
+            cls->members[cls->member_count++] = mi;
+
+            if (strcmp(func->name.value, cd->name) == 0) {
+                cls->constructor = func;
+            }
+
+            Symbol* func_sym = lookup_symbol(func->name.value);
+            if (!func_sym) {
+                func_sym = calloc(1, sizeof(Symbol));
+                func_sym->key = strdup(func->name.value);
+                func_sym->value.type = TOKEN_IDENTIFIER;
+                func_sym->value.value = strdup(func->name.value);
+                func_sym->type = DATA_INT;
+                func_sym->internal_name = strdup(func->internal_name);
+                func_sym->is_function = false;
+                insert_symbol(func_sym);
+            }
         }
     }
+
+    ASTNode* new_head = NULL;
+    ASTNode* new_tail = NULL;
+
+    for (int i = 0; i < mcount; i++) {
+        if (!new_head) {
+            new_head = new_tail = marray[i];
+        } else {
+            new_tail->next = marray[i];
+            new_tail = marray[i];
+        }
+    }
+
+    if (extra_head) {
+        if (!new_head) {
+            new_head = extra_head;
+        } else {
+            new_tail->next = extra_head;
+        }
+    }
+
+    cd->members = new_head;
+    free(marray);
+    #undef APPEND_EXTRA
 
     if (all_parents_valid) {
         for (int p = 0; p < cd->parent_count; p++) {
@@ -1629,7 +1753,7 @@ static void resolve_class_members(AST_ClassDef* cd, ClassEntry* cls) {
                 if (cls->member_count >= cls->member_capacity) {
                     cls->member_capacity = cls->member_capacity ? cls->member_capacity * 2 : 8;
                     cls->members = realloc(cls->members,
-                                           sizeof(MemberInfo*) * cls->member_capacity);
+                                           sizeof(MemberInfo*) * (size_t)cls->member_capacity);
                 }
                 MemberInfo* mi = calloc(1, sizeof(MemberInfo));
                 mi->name = strdup(pmi->name);
@@ -1666,7 +1790,6 @@ static void resolve_class_members(AST_ClassDef* cd, ClassEntry* cls) {
 
     cls->total_size = off;
     if (cls->total_size == 0) cls->total_size = 4;
-
     cls->members_resolved = true;
 
     exit_scope();
@@ -1709,6 +1832,9 @@ static void analyze_class_bodies(AST_ClassDef* cd, ClassEntry* cls) {
         field_sym->is_field = true;
         field_sym->field_offset = mi->offset;
         field_sym->field_modifier = mi->field_modifier;
+        if (mi->field_class_name) {
+            field_sym->class_name = strdup(mi->field_class_name);
+        }
         insert_symbol(field_sym);
     }
 
@@ -1936,6 +2062,17 @@ static void analyze_node(ASTNode* temp) {
                         literal->internal_name = strdup(func_def->internal_name);
                         literal->dataType = func_def->Return ?
                             func_def->Return->returnType : DATA_VOID;
+                        literal->returns_array = func_def->returns_array;
+                        if (func_def->returns_array) {
+                            int total = get_type_size(func_def->return_element_type);
+                            for (int d = 0; d < func_def->return_dim_count; d++) {
+                                if (func_def->return_dim_sizes[d] > 0)
+                                    total *= func_def->return_dim_sizes[d];
+                            }
+                            literal->return_total_bytes = total;
+                        } else {
+                            literal->return_total_bytes = 0;
+                        }
                         if (func_def->parameterCount > 0 &&
                             func_def->parameterType[0] == DATA_IDENTIFIER &&
                             current_class != NULL &&
@@ -2292,18 +2429,28 @@ static void analyze_node(ASTNode* temp) {
     }
 
     case AST_NEW_ARRAY: {
-        AST_NewArray* newArr = (AST_NewArray*)temp;
-        int total = 1;
-        for (int i = 0; i < newArr->dim_count; i++) {
-            if (newArr->dim_sizes[i] <= 0) {
-                Token narr_token = {.line = newArr->base.value.line, .column = newArr->base.value.column};
-                ERROR(ERR_SEM_INVALID_INDEX,
-                      SEMLOC(narr_token),
-                      "array dimension must be positive");
+            AST_NewArray* newArr = (AST_NewArray*)temp;
+            if (newArr->dim_exprs) {
+                for (int i = 0; i < newArr->dim_count; i++) {
+                    if (newArr->dim_exprs[i]) {
+                        analyze_node(newArr->dim_exprs[i]);
+                    }
+                }
             }
-            total *= newArr->dim_sizes[i];
-        }
-        break;
+            int total = 1;
+            for (int i = 0; i < newArr->dim_count; i++) {
+                if (newArr->dim_sizes[i] == -1) {
+                    continue;
+                }
+                if (newArr->dim_sizes[i] <= 0) {
+                    Token narr_token = {.line = newArr->base.value.line, .column = newArr->base.value.column};
+                    ERROR(ERR_SEM_INVALID_INDEX,
+                          SEMLOC(narr_token),
+                          "array dimension must be positive");
+                }
+                total *= newArr->dim_sizes[i];
+            }
+            break;
     }
 
     case AST_ARRAY_ASS: {
@@ -2543,6 +2690,12 @@ static void analyze_node(ASTNode* temp) {
         if (strcmp(var->name.value, "this") == 0 && current_class_name != NULL) {
             sym->class_name = strdup(current_class_name);
         }
+        if (var->dataType == DATA_IDENTIFIER && var->internal_name != NULL) {
+            ClassEntry* cls = find_class(var->internal_name);
+            if (cls) {
+                sym->class_name = strdup(var->internal_name);
+            }
+        }
         insert_symbol(sym);
         var->internal_name = strdup(internal);
         free(internal);
@@ -2580,10 +2733,12 @@ static void analyze_node(ASTNode* temp) {
                 if (target_int_family && source_float_family) ok = true;
 
                 if ((var->dataType == DATA_STRING && expr_type == DATA_CHAR) ||
-                    (var->dataType == DATA_CHAR  && expr_type == DATA_STRING)) ok = true;
-                if (var->dataType == DATA_IDENTIFIER || expr_type == DATA_IDENTIFIER) {
+                    (var->dataType == DATA_CHAR  && expr_type == DATA_STRING))
                     ok = true;
-                }
+                if (var->dataType == DATA_IDENTIFIER || expr_type == DATA_IDENTIFIER)
+                    ok = true;
+                if (var->dataType == DATA_IDENTIFIER && (expr_type == DATA_INT || expr_type == DATA_UINT))
+                    ok = true;
                 if (!ok) {
                     ERROR(ERR_SEM_TYPE_MISMATCH,
                           SEMLOC(var->name),
@@ -2639,6 +2794,12 @@ static void analyze_node(ASTNode* temp) {
         Symbol* sym = create_symbol(var->name, var->dataType, var->name.value, internal);
         if (strcmp(var->name.value, "this") == 0 && current_class_name != NULL) {
             sym->class_name = strdup(current_class_name);
+        }
+        if (var->dataType == DATA_IDENTIFIER && var->internal_name != NULL) {
+            ClassEntry* cls = find_class(var->internal_name);
+            if (cls) {
+                sym->class_name = strdup(var->internal_name);
+            }
         }
         insert_symbol(sym);
 
@@ -2706,6 +2867,8 @@ static void analyze_node(ASTNode* temp) {
 
                 if ((sym->type == DATA_STRING && expr_type == DATA_CHAR) ||
                     (sym->type == DATA_CHAR  && expr_type == DATA_STRING)) ok = true;
+                if (sym->type == DATA_IDENTIFIER && (expr_type == DATA_INT || expr_type == DATA_UINT))
+                    ok = true;
 
                 if (!ok) {
                     ERROR(ERR_SEM_TYPE_MISMATCH,
@@ -2966,6 +3129,9 @@ static void analyze_node(ASTNode* temp) {
     case AST_FUNCTION: {
         AST_Function* function_node = (AST_Function*)temp;
 
+        AST_Function* saved_func = current_analyzing_function;
+        current_analyzing_function = function_node;
+
         bool had_preset_return = (function_node->Return != NULL);
         AST_Return* saved_return = function_node->Return;
         int saved_return_count = function_node->return_Count;
@@ -3039,6 +3205,7 @@ static void analyze_node(ASTNode* temp) {
                 main_has_args = true;
             }
         }
+        current_analyzing_function = saved_func;
         break;
     }
 
@@ -3058,8 +3225,69 @@ static void analyze_node(ASTNode* temp) {
                 break;
             }
             target_class = find_class(obj_sym->class_name);
-        }
-        else if (ma->object->type == AST_LITERAL) {
+        } else if (ma->object->type == AST_MEMBER_ACCESS) {
+            AST_MemberAccess* inner = (AST_MemberAccess*)ma->object;
+            ClassEntry* inner_class = NULL;
+            if (inner->object->type == AST_LITERAL) {
+                AST_Literal* obj_lit = (AST_Literal*)inner->object;
+                Symbol* sym = lookup_symbol(obj_lit->base.value.value);
+                if (sym && sym->class_name) {
+                    inner_class = find_class(sym->class_name);
+                }
+            } else if (inner->object->type == AST_THIS) {
+                Symbol* this_sym = lookup_symbol("this");
+                if (this_sym && this_sym->class_name) {
+                    inner_class = find_class(this_sym->class_name);
+                }
+            }
+            if (inner_class) {
+                for (int i = 0; i < inner_class->member_count; i++) {
+                    MemberInfo* mi = inner_class->members[i];
+                    if (!mi->is_method && strcmp(mi->name, inner->member_name) == 0) {
+                        if (mi->field_class_name) {
+                            target_class = find_class(mi->field_class_name);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (!target_class) {
+                target_class = find_class(inner->member_name);
+            }
+            if (!target_class) {
+                ERROR(ERR_SEM_TYPE_MISMATCH,
+                      SEMLOC(ma->base.value),
+                      "cannot resolve chain member access");
+                break;
+            }
+        } else if (ma->object->type == AST_MEMBER_ACCESS) {
+            AST_MemberAccess* inner = (AST_MemberAccess*)ma->object;
+            ClassEntry* inner_class = NULL;
+            if (inner->object->type == AST_LITERAL) {
+                AST_Literal* obj_lit = (AST_Literal*)inner->object;
+                Symbol* sym = lookup_symbol(obj_lit->base.value.value);
+                if (sym && sym->class_name) {
+                    inner_class = find_class(sym->class_name);
+                }
+            }
+            if (inner_class) {
+                for (int i = 0; i < inner_class->member_count; i++) {
+                    MemberInfo* mi = inner_class->members[i];
+                    if (!mi->is_method && strcmp(mi->name, inner->member_name) == 0) {
+                        if (mi->field_class_name) {
+                            target_class = find_class(mi->field_class_name);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (!target_class) {
+                ERROR(ERR_SEM_TYPE_MISMATCH,
+                      SEMLOC(ma->base.value),
+                      "cannot resolve chain member access");
+                break;
+            }
+        } else if (ma->object->type == AST_LITERAL) {
             AST_Literal* obj_lit = (AST_Literal*)ma->object;
             if (strcmp(obj_lit->base.value.value, "this") == 0) {
                 obj_sym = lookup_symbol("this");
@@ -3469,6 +3697,75 @@ static void analyze_node(ASTNode* temp) {
 
         analyze_node(return_node->value);
 
+            if (current_analyzing_function &&
+                current_analyzing_function->returns_array)
+        {
+            if (return_node->value == NULL)
+            {
+                ERROR(ERR_SEM_RETURN_TYPE_MISMATCH,
+                      SEMLOC(return_node->base.value),
+                      "array-returning function must return an array value");
+            }
+            else
+            {
+                ASTNode* val = return_node->value;
+                DataType expr_type = get_expression_type(val);
+                if (val->type == AST_LITERAL)
+                {
+                    AST_Literal* lit = (AST_Literal*)val;
+                    Symbol* sym = lookup_symbol(lit->base.value.value);
+                    if (sym && sym->dim_count > 0)
+                    {
+                        if (sym->dim_count != current_analyzing_function->return_dim_count)
+                        {
+                            ERROR(ERR_SEM_RETURN_TYPE_MISMATCH,
+                                  SEMLOC(return_node->base.value),
+                                  "return array dimension mismatch: "
+                                  "expected %d, got %d",
+                                  current_analyzing_function->return_dim_count,
+                                  sym->dim_count);
+                        }
+
+                        if (!types_compatible(
+                                current_analyzing_function->return_element_type,
+                                sym->type))
+                        {
+                            ERROR(ERR_SEM_RETURN_TYPE_MISMATCH,
+                                  SEMLOC(return_node->base.value),
+                                  "return array element type mismatch: "
+                                  "expected '%s', got '%s'",
+                                  data_type_to_string(
+                                      current_analyzing_function->return_element_type),
+                                  data_type_to_string(sym->type));
+                        }
+                    }
+                }
+                else if (val->type == AST_ARRAY_ACCESS)
+                {
+                    AST_ArrayAccess* acc = (AST_ArrayAccess*)val;
+                    if (!types_compatible(
+                            current_analyzing_function->return_element_type,
+                            acc->elementType))
+                    {
+                        ERROR(ERR_SEM_RETURN_TYPE_MISMATCH,
+                              SEMLOC(return_node->base.value),
+                              "return array element type mismatch: "
+                              "expected '%s', got '%s'",
+                              data_type_to_string(
+                                  current_analyzing_function->return_element_type),
+                              data_type_to_string(acc->elementType));
+                    }
+                }
+                else
+                {
+                    ERROR(ERR_SEM_RETURN_TYPE_MISMATCH,
+                          SEMLOC(return_node->base.value),
+                          "array-returning function requires an array expression");
+                }
+            }
+            break;
+        }
+
         if (return_node->returnType == DATA_VOID) {
             if (return_node->value != NULL) {
                 ERROR(ERR_SEM_VOID_VALUE,
@@ -3580,6 +3877,7 @@ void Semantics(ASTNode* ast_node) {
     }
 
     predeclare_all_types(ast_node);
+
     main_parse(ast_node);
 
     if (!has_main_function()) {
@@ -3634,6 +3932,7 @@ static void cleanup_class_table(void)
                 if (cls->members[i]) {
                     if (cls->members[i]->name) free(cls->members[i]->name);
                     if (cls->members[i]->init_value_str) free(cls->members[i]->init_value_str);
+                    if (cls->members[i]->field_class_name) free(cls->members[i]->field_class_name);
                     free(cls->members[i]);
                 }
             }

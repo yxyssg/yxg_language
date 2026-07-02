@@ -369,8 +369,17 @@ void lexer_parse()
             if (!string_is_empty(string)) {
                 const char* buf = string_cstr(string);
                 int len = string_length(string);
-                if (len > 0 && isdigit((unsigned char)buf[len - 1]))
+                bool is_pure_number = true;
+                int start = (buf[0] == '-') ? 1 : 0;
+                if (start >= len) is_pure_number = false;
+                for (int j = start; j < len && is_pure_number; j++) {
+                    if (!isdigit((unsigned char)buf[j])) {
+                        is_pure_number = false;
+                    }
+                }
+                if (is_pure_number && len > start) {
                     absorb = true;
+                }
             } else {
                 if (isdigit((unsigned char)lex->source[lex->i + 1]))
                     absorb = true;

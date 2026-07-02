@@ -46,12 +46,13 @@ typedef struct MemberInfo {
     char* name;
     DataType type;
     bool is_method;
-    AST_Function* func;  // 如果是方法，指向函数定义
-    int offset;          // 内存偏移（语义分析后计算）
+    AST_Function* func;
+    int offset;
     struct ClassEntry* inherited_from;
     int field_modifier;
     ASTNode* init_expr;
     char* init_value_str;
+    char* field_class_name;
 } MemberInfo;
 
 typedef struct ClassEntry {
@@ -59,10 +60,10 @@ typedef struct ClassEntry {
     char** parent_names;
     int    parent_count;
     int modifier;
-    MemberInfo** members;   // 成员数组
+    MemberInfo** members;
     int member_count;
     int member_capacity;
-    int total_size;         // 实例总字节数
+    int total_size;
     struct ClassEntry* next;
     AST_Function* constructor;
     bool members_resolved;

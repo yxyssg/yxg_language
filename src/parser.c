@@ -356,7 +356,7 @@ ASTNode* parser_Sentence(Parser* parser, bool is_block)
             if (next == TOKEN_IDENTIFIER && next2 == TOKEN_PAREN_LEFT) {
                 return parser_def_function_with_modifier(parser, modifier);
             } else {
-                temp = parser_var(parser);
+                temp = parser_var(parser,true);
                 if (temp) {
                     if (temp->type == AST_ARRAY_DECL) {
                         ((AST_ArrayDecl*)temp)->modifier = modifier;
@@ -403,13 +403,23 @@ ASTNode* parser_Sentence(Parser* parser, bool is_block)
         parser_eat(parser, TOKEN_SEMICOLON);
     } else if (is_var_type(parser->current.type))
     {
-        if (parser->tokens[parser->index + 1].type == TOKEN_IDENTIFIER &&
-            parser->tokens[parser->index + 2].type == TOKEN_PAREN_LEFT) {
+        int lookahead = parser->index + 1;
+        while (parser->tokens[lookahead].type == TOKEN_SQUARE_BRACKET_LEFT) {
+            lookahead++;
+            if (parser->tokens[lookahead].type == TOKEN_NUMBER)
+                lookahead++;
+            lookahead++;
+        }
+        if (parser->tokens[lookahead].type == TOKEN_IDENTIFIER &&
+            parser->tokens[lookahead + 1].type == TOKEN_PAREN_LEFT) {
             temp = parser_def_function(parser);
-            } else {
-                temp = parser_var(parser);
-                parser_eat(parser, TOKEN_SEMICOLON);
-            }
+        } else if (parser->tokens[parser->index + 1].type == TOKEN_IDENTIFIER &&
+                    parser->tokens[parser->index + 2].type == TOKEN_PAREN_LEFT) {
+            temp = parser_def_function(parser);
+        } else {
+            temp = parser_var(parser,true);
+            parser_eat(parser, TOKEN_SEMICOLON);
+        }
     } else if (parser->current.type == TOKEN_IDENTIFIER) {
         TokenType next = parser->tokens[parser->index + 1].type;
         TokenType next2 = parser->tokens[parser->index + 2].type;
@@ -821,7 +831,7 @@ ASTNode* parser_constructor_def(Parser* parser, int modifier)
     while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT)
            && !parser_current_is_type(parser, TOKEN_EOF))
     {
-        ASTNode* param = parser_var(parser);
+        ASTNode* param = parser_var(parser,false);
         if (param == NULL) {
             while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT)
                    && !parser_current_is_type(parser, TOKEN_COMMA)
@@ -905,14 +915,15 @@ ASTNode* parser_class_def(Parser* parser, int modifier)
     {
         ASTNode* stmt = parser_Sentence(parser, true);
         if (stmt) {
+            ASTNode* stmt_tail = stmt;
+            while (stmt_tail->next != NULL)
+                stmt_tail = stmt_tail->next;
             if (!members_head) {
                 members_head = stmt;
-                members_tail = stmt;
+                members_tail = stmt_tail;
             } else {
                 members_tail->next = stmt;
-                while (members_tail->next != NULL) {
-                    members_tail = members_tail->next;
-                }
+                members_tail = stmt_tail;
             }
         }
     }
@@ -1108,16 +1119,67 @@ ASTNode* parser_def_function_with_modifier(Parser* parser, int modifier) {
     ast_function->Return = NULL;
     ast_function->Modifier = modifier;
     ast_function->internal_name = NULL;
+    ast_function->returns_array       = false;
+    ast_function->return_element_type = DATA_VOID;
+    ast_function->return_dim_count    = 0;
+    ast_function->return_dim_sizes    = NULL;
 
     DataType return_type = DATA_VOID;
     if (is_var_type(parser->current.type)) {
         return_type = Get_Datatype(parser->current.type);
-        parser_advance(parser);
     } else {
         ERROR(ERR_PARSE_INVALID_TYPE,
               LOC(parser->filename, parser->current.line, parser->current.column),
               "expected type keyword before '%s'",
               type_to_string(parser->current.type));
+    }
+    parser_advance(parser);
+
+    if (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT))
+    {
+        int dim_cap = 4;
+        int dim_cnt = 0;
+        int* dim_sizes = malloc(sizeof(int) * dim_cap);
+        if (!dim_sizes) OUT_OF_MEMORY();
+        while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT))
+        {
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
+            int size = -1;
+            if (parser_current_is_type(parser, TOKEN_NUMBER))
+            {
+                size = atoi(parser->current.value);
+                parser_eat(parser, TOKEN_NUMBER);
+            }
+            else if (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT))
+            {
+                ERROR(ERR_PARSE_EXPECTED_TOKEN,
+                      LOC(parser->filename, parser->current.line,
+                          parser->current.column),
+                      "expected array size or ']' in return type");
+                free(dim_sizes);
+                return NULL;
+            }
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
+            if (dim_cnt >= dim_cap)
+            {
+                dim_cap *= 2;
+                dim_sizes = realloc(dim_sizes, sizeof(int) * (size_t)dim_cap);
+                if (!dim_sizes) OUT_OF_MEMORY();
+            }
+            dim_sizes[dim_cnt++] = size;
+        }
+        if (dim_cnt > 0)
+        {
+            ast_function->returns_array       = true;
+            ast_function->return_element_type = return_type;
+            ast_function->return_dim_count    = dim_cnt;
+            ast_function->return_dim_sizes    = dim_sizes;
+            return_type = DATA_VOID;
+        }
+        else
+        {
+            free(dim_sizes);
+        }
     }
 
     ast_function->base.value = parser->current;
@@ -1126,7 +1188,7 @@ ASTNode* parser_def_function_with_modifier(Parser* parser, int modifier) {
 
     parser_eat(parser, TOKEN_PAREN_LEFT);
     while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT) && !parser_current_is_type(parser, TOKEN_EOF)) {
-        ASTNode* param = parser_var(parser);
+        ASTNode* param = parser_var(parser,false);
         if (param == NULL) {
             while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT) && !parser_current_is_type(parser, TOKEN_EOF))
                 parser_advance(parser);
@@ -1176,37 +1238,58 @@ ASTNode* parser_var_with_typename(Parser* parser) {
     char* className = strdup(parser->current.value);
     parser_advance(parser);
 
-    if (!parser_current_is_type(parser, TOKEN_IDENTIFIER)) {
-        ERROR(ERR_PARSE_EXPECTED_TOKEN,
-              LOC(parser->filename, parser->current.line, parser->current.column),
-              "expected variable name after type");
-        free(className);
-        return NULL;
-    }
+    ASTNode* head = NULL;
+    ASTNode* tail = NULL;
 
-    Token varName = parser->current;
-    parser_advance(parser);
+    do {
+        if (!parser_current_is_type(parser, TOKEN_IDENTIFIER)) {
+            ERROR(ERR_PARSE_EXPECTED_TOKEN,
+                  LOC(parser->filename, parser->current.line, parser->current.column),
+                  "expected variable name after type");
+            free(className);
+            AST_Free(head);
+            return NULL;
+        }
 
-    ASTNode* init = NULL;
-    if (parser_current_is_type(parser, TOKEN_ASSIGN)) {
+        Token varName = parser->current;
         parser_advance(parser);
-        init = parser_Binary(parser);
-    }
 
-    AST_Var* var = calloc(1, sizeof(AST_Var));
-    var->base.type = (init != NULL) ? AST_VAR : AST_UNINIT_VAR;
-    var->base.next = NULL;
-    var->base.value = varName;
-    var->type = TOKEN_IDENTIFIER;
-    var->name = varName;
-    var->Value = init;
-    var->dataType = DATA_IDENTIFIER;
-    var->internal_name = className;
-    var->dim_count = 0;
-    var->dim_sizes = NULL;
-    var->modifier = 0;
+        ASTNode* init = NULL;
+        if (parser_current_is_type(parser, TOKEN_ASSIGN)) {
+            parser_advance(parser);
+            init = parser_Binary(parser);
+        }
 
-    return (ASTNode*)var;
+        AST_Var* var = calloc(1, sizeof(AST_Var));
+        var->base.type = (init != NULL) ? AST_VAR : AST_UNINIT_VAR;
+        var->base.next = NULL;
+        var->base.value = varName;
+        var->type = TOKEN_IDENTIFIER;
+        var->name = varName;
+        var->Value = init;
+        var->dataType = DATA_IDENTIFIER;
+        var->internal_name = className;
+        var->dim_count = 0;
+        var->dim_sizes = NULL;
+        var->modifier = 0;
+
+        ASTNode* node = (ASTNode*)var;
+
+        if (!head) {
+            head = tail = node;
+        } else {
+            var->internal_name = strdup(className);
+            tail->next = node;
+            tail = node;
+        }
+
+        if (!parser_current_is_type(parser, TOKEN_COMMA))
+            break;
+        parser_advance(parser);
+
+    } while (true);
+
+    return head;
 }
 
 ASTNode* parser_def_function(Parser* parser)
@@ -1219,6 +1302,10 @@ ASTNode* parser_def_function(Parser* parser)
     ast_function->Parameter = NULL;
     ast_function->Return = NULL;
     ast_function->internal_name = NULL;
+    ast_function->returns_array      = false;
+    ast_function->return_element_type = DATA_VOID;
+    ast_function->return_dim_count   = 0;
+    ast_function->return_dim_sizes   = NULL;
 
     if (parser_current_is_type(parser, TOKEN_PUB))
     {
@@ -1246,6 +1333,53 @@ ASTNode* parser_def_function(Parser* parser)
     }
     parser_advance(parser);
 
+    if (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT))
+    {
+        int dim_cap = 4;
+        int dim_cnt = 0;
+        int* dim_sizes = malloc(sizeof(int) * dim_cap);
+        if (!dim_sizes) OUT_OF_MEMORY();
+        while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT))
+        {
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
+            int size = -1;
+            if (parser_current_is_type(parser, TOKEN_NUMBER))
+            {
+                size = atoi(parser->current.value);
+                parser_eat(parser, TOKEN_NUMBER);
+            }
+            else if (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT))
+            {
+                ERROR(ERR_PARSE_EXPECTED_TOKEN,
+                      LOC(parser->filename, parser->current.line,
+                          parser->current.column),
+                      "expected array size or ']' in return type");
+                free(dim_sizes);
+                return NULL;
+            }
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
+            if (dim_cnt >= dim_cap)
+            {
+                dim_cap *= 2;
+                dim_sizes = realloc(dim_sizes, sizeof(int) * (size_t)dim_cap);
+                if (!dim_sizes) OUT_OF_MEMORY();
+            }
+            dim_sizes[dim_cnt++] = size;
+        }
+        if (dim_cnt > 0)
+        {
+            ast_function->returns_array       = true;
+            ast_function->return_element_type = return_type;
+            ast_function->return_dim_count    = dim_cnt;
+            ast_function->return_dim_sizes    = dim_sizes;
+            return_type = DATA_VOID;
+        }
+        else
+        {
+            free(dim_sizes);
+        }
+    }
+
     ast_function->base.value = parser->current;
     ast_function->name = parser->current;
     parser_advance(parser);
@@ -1253,7 +1387,7 @@ ASTNode* parser_def_function(Parser* parser)
     parser_eat(parser, TOKEN_PAREN_LEFT);
     while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT) && !parser_current_is_type(parser, TOKEN_EOF))
     {
-        ASTNode* temp = parser_var(parser);
+        ASTNode* temp = parser_var(parser,false);
         if (temp == NULL) {
             while (!parser_current_is_type(parser, TOKEN_PAREN_RIGHT) &&
                    !parser_current_is_type(parser, TOKEN_COMMA) &&
@@ -1677,8 +1811,18 @@ ASTNode* parser_switch(Parser* parser) {
                    !parser_current_is_type(parser, TOKEN_EOF)) {
                 ASTNode* stmt = parser_Sentence(parser, true);
                 if (stmt) {
-                    if (!body_head) { body_head = stmt; body_tail = stmt; }
-                    else { body_tail->next = stmt; body_tail = stmt; }
+                    // 找到 stmt 链表的真正尾节点
+                    ASTNode* stmt_tail = stmt;
+                    while (stmt_tail->next != NULL)
+                        stmt_tail = stmt_tail->next;
+
+                    if (!body_head) {
+                        body_head = stmt;
+                        body_tail = stmt_tail;
+                    } else {
+                        body_tail->next = stmt;
+                        body_tail = stmt_tail;
+                    }
                 }
             }
 
@@ -1704,8 +1848,16 @@ ASTNode* parser_switch(Parser* parser) {
                    !parser_current_is_type(parser, TOKEN_EOF)) {
                 ASTNode* stmt = parser_Sentence(parser, true);
                 if (stmt) {
-                    if (!body_head) { body_head = stmt; body_tail = stmt; }
-                    else { body_tail->next = stmt; body_tail = stmt; }
+                    ASTNode* stmt_tail = stmt;
+                    while (stmt_tail->next != NULL)
+                        stmt_tail = stmt_tail->next;
+                    if (!body_head) {
+                        body_head = stmt;
+                        body_tail = stmt_tail;
+                    } else {
+                        body_tail->next = stmt;
+                        body_tail = stmt_tail;
+                    }
                 }
             }
 
@@ -1797,7 +1949,8 @@ ASTNode* parser_def_var(Parser* parser)
     return (ASTNode*)ast_var;
 }
 
-ASTNode* parser_var(Parser* parser) {
+ASTNode* parser_var(Parser* parser, bool allow_multi_decl)
+{
     Token type_token = parser->current;
 
     if (!is_var_type(type_token.type)) {
@@ -1810,9 +1963,9 @@ ASTNode* parser_var(Parser* parser) {
 
     parser_advance(parser);
 
-    int dim_count = 0;
-    int dim_capacity = 4;
-    int* dim_sizes = malloc(sizeof(int) * dim_capacity);
+    int type_dim_count = 0;
+    int type_dim_capacity = 4;
+    int* type_dim_sizes = malloc(sizeof(int) * type_dim_capacity);
 
     while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT)) {
         parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
@@ -1825,64 +1978,75 @@ ASTNode* parser_var(Parser* parser) {
             ERROR(ERR_PARSE_EXPECTED_TOKEN,
                   LOC(parser->filename, parser->current.line, parser->current.column),
                   "expected array size or ']'");
-            free(dim_sizes);
+            free(type_dim_sizes);
             return NULL;
         }
 
         parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
 
-        if (dim_count >= dim_capacity) {
-            dim_capacity *= 2;
-            dim_sizes = realloc(dim_sizes, sizeof(int) * dim_capacity);
+        if (type_dim_count >= type_dim_capacity) {
+            type_dim_capacity *= 2;
+            type_dim_sizes = realloc(type_dim_sizes, sizeof(int) * type_dim_capacity);
         }
-        dim_sizes[dim_count++] = size;
+        type_dim_sizes[type_dim_count++] = size;
     }
 
-    if (!parser_current_is_type(parser, TOKEN_IDENTIFIER)) {
-        ERROR(ERR_PARSE_EXPECTED_TOKEN,
-              LOC(parser->filename, parser->current.line, parser->current.column),
-              "expected variable name after type");
-        free(dim_sizes);
-        return NULL;
-    }
+    ASTNode* head = NULL;
+    ASTNode* tail = NULL;
 
-    Token var_name_token = parser->current;
-    char* var_name = strdup(var_name_token.value);
-    parser_advance(parser);
-
-    while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT)) {
-        parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
-
-        int size = -1;
-        if (parser_current_is_type(parser, TOKEN_NUMBER)) {
-            size = atoi(parser->current.value);
-            parser_eat(parser, TOKEN_NUMBER);
-        } else if (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT)) {
+    do {
+        if (!parser_current_is_type(parser, TOKEN_IDENTIFIER)) {
             ERROR(ERR_PARSE_EXPECTED_TOKEN,
                   LOC(parser->filename, parser->current.line, parser->current.column),
-                  "expected array size or ']'");
-            free(dim_sizes);
-            free(var_name);
+                  "expected variable name after type");
+            free(type_dim_sizes);
+            AST_Free(head);
             return NULL;
         }
 
-        parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
+        Token var_name_token = parser->current;
+        char* var_name = strdup(var_name_token.value);
+        parser_advance(parser);
 
-        if (dim_count >= dim_capacity) {
-            dim_capacity *= 2;
-            dim_sizes = realloc(dim_sizes, sizeof(int) * dim_capacity);
-        }
-        dim_sizes[dim_count++] = size;
-    }
+        int var_dim_count = 0;
+        int var_dim_capacity = 4;
+        int* var_dim_sizes = malloc(sizeof(int) * var_dim_capacity);
 
-    if (dim_count > 0) {
-        bool has_unknown = false;
-        for (int i = 0; i < dim_count; i++) {
-            if (dim_sizes[i] == -1) {
-                has_unknown = true;
-                break;
+        while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT)) {
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
+
+            int size = -1;
+            if (parser_current_is_type(parser, TOKEN_NUMBER)) {
+                size = atoi(parser->current.value);
+                parser_eat(parser, TOKEN_NUMBER);
+            } else if (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT)) {
+                ERROR(ERR_PARSE_EXPECTED_TOKEN,
+                      LOC(parser->filename, parser->current.line, parser->current.column),
+                      "expected array size or ']'");
+                free(var_dim_sizes);
+                free(var_name);
+                free(type_dim_sizes);
+                AST_Free(head);
+                return NULL;
             }
+
+            parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
+
+            if (var_dim_count >= var_dim_capacity) {
+                var_dim_capacity *= 2;
+                var_dim_sizes = realloc(var_dim_sizes, sizeof(int) * var_dim_capacity);
+            }
+            var_dim_sizes[var_dim_count++] = size;
         }
+
+        int total_dim_count = type_dim_count + var_dim_count;
+        int* total_dim_sizes = NULL;
+        if (total_dim_count > 0) {
+            total_dim_sizes = malloc(sizeof(int) * total_dim_count);
+            memcpy(total_dim_sizes, type_dim_sizes, sizeof(int) * type_dim_count);
+            memcpy(total_dim_sizes + type_dim_count, var_dim_sizes, sizeof(int) * var_dim_count);
+        }
+        free(var_dim_sizes);
 
         ASTNode* init = NULL;
         if (parser_current_is_type(parser, TOKEN_ASSIGN)) {
@@ -1893,55 +2057,67 @@ ASTNode* parser_var(Parser* parser) {
                 init = parser_Binary(parser);
         }
 
-        if (has_unknown && init == NULL) {
+        ASTNode* node = NULL;
+
+        if (total_dim_count > 0) {
+            bool has_unknown = false;
+            for (int i = 0; i < total_dim_count; i++) {
+                if (total_dim_sizes[i] == -1) {
+                    has_unknown = true;
+                    break;
+                }
+            }
+
+            AST_ArrayDecl* arr = calloc(1, sizeof(AST_ArrayDecl));
+            if (!arr) { OUT_OF_MEMORY(); }
+            arr->base.type = AST_ARRAY_DECL;
+            arr->base.next = NULL;
+            arr->base.value = type_token;
+            arr->elementType = Get_Datatype(type_token.type);
+            arr->name = var_name;
+            arr->dim_sizes = total_dim_sizes;
+            arr->dim_count = total_dim_count;
+            arr->internal_name = NULL;
+            arr->init_list = init;
+            arr->modifier = 0;
+            node = (ASTNode*)arr;
+        } else {
+            free(total_dim_sizes);
+
+            AST_Var* var = calloc(1, sizeof(AST_Var));
+            if (!var) { OUT_OF_MEMORY(); }
+            var->base.type = (init != NULL) ? AST_VAR : AST_UNINIT_VAR;
+            var->base.next = NULL;
+            var->base.value = type_token;
+            var->type = type_token.type;
+            var->name = var_name_token;
+            var->Value = init;
+            var->dataType = DATA_ERROR;
+            var->internal_name = NULL;
+            var->dim_count = 0;
+            var->dim_sizes = NULL;
+            var->modifier = 0;
+            node = (ASTNode*)var;
         }
 
-        AST_ArrayDecl* arr = calloc(1, sizeof(AST_ArrayDecl));
-        if (!arr) {
-            OUT_OF_MEMORY();
+        if (!head) {
+            head = tail = node;
+        } else {
+            tail->next = node;
+            tail = node;
         }
-        arr->base.type = AST_ARRAY_DECL;
-        arr->base.next = NULL;
-        arr->base.value = type_token;
-        arr->elementType = Get_Datatype(type_token.type);
-        arr->name = var_name;
-        arr->dim_sizes = dim_sizes;
-        arr->dim_count = dim_count;
-        arr->internal_name = NULL;
-        arr->init_list = init;
-        arr->modifier = 0;
 
-        return (ASTNode*)arr;
-    }
+        if (!allow_multi_decl)
+            break;
+        if (!parser_current_is_type(parser, TOKEN_COMMA))
+            break;
 
-    free(dim_sizes);
+        parser_advance(parser);
 
-    ASTNode* init = NULL;
-    if (parser_current_is_type(parser, TOKEN_ASSIGN)) {
-        parser_eat(parser, TOKEN_ASSIGN);
-        if (parser_current_is_type(parser, TOKEN_BRACKET_LEFT))
-            init = parser_init_list(parser);
-        else
-            init = parser_Binary(parser);
-    }
+    } while (true);
 
-    AST_Var* var = calloc(1, sizeof(AST_Var));
-    if (!var) {
-        OUT_OF_MEMORY();
-    }
-    var->base.type = (init != NULL) ? AST_VAR : AST_UNINIT_VAR;
-    var->base.next = NULL;
-    var->base.value = type_token;
-    var->type = type_token.type;
-    var->name = var_name_token;
-    var->Value = init;
-    var->dataType = DATA_ERROR;
-    var->internal_name = NULL;
-    var->dim_count = 0;
-    var->dim_sizes = NULL;
-    var->modifier = 0;
-
-    return (ASTNode*)var;
+    free(type_dim_sizes);
+    return head;
 }
 
 ASTNode* parser_Print(Parser* parser)
@@ -2335,29 +2511,39 @@ static ASTNode* parser_primary(Parser* parser)
 
             int dim_cap = 4, dim_cnt = 0;
             int* dim_sizes = malloc(sizeof(int) * dim_cap);
+            ASTNode** dim_exprs = calloc(dim_cap, sizeof(ASTNode*));
+            if (!dim_sizes || !dim_exprs) OUT_OF_MEMORY();
+
             while (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_LEFT)) {
                 parser_eat(parser, TOKEN_SQUARE_BRACKET_LEFT);
-                if (!parser_current_is_type(parser, TOKEN_NUMBER)) {
-                    ERROR(ERR_PARSE_ILLEGAL_OPERAND,
-                          LOC(parser->filename, parser->current.line, parser->current.column),
-                          "array dimension must be a constant integer");
-                    free(dim_sizes);
-                    while (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT) &&
-                           !parser_current_is_type(parser, TOKEN_EOF))
-                        parser_advance(parser);
-                    if (parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT))
-                        parser_advance(parser);
-                    return NULL;
+                int size = -1;
+                ASTNode* expr = NULL;
+                if (parser_current_is_type(parser, TOKEN_NUMBER)) {
+                    size = atoi(parser->current.value);
+                    parser_eat(parser, TOKEN_NUMBER);
+                } else if (!parser_current_is_type(parser, TOKEN_SQUARE_BRACKET_RIGHT)) {
+                    expr = parser_Binary(parser);
+                    if (expr == NULL) {
+                        free(dim_sizes);
+                        free(dim_exprs);
+                        return NULL;
+                    }
+                    if (expr->type == AST_LITERAL &&
+                        ((AST_Literal*)expr)->base.value.type == TOKEN_NUMBER) {
+                        size = atoi(((AST_Literal*)expr)->base.value.value);
+                    }
                 }
-                int size = atoi(parser->current.value);
-                parser_eat(parser, TOKEN_NUMBER);
                 parser_eat(parser, TOKEN_SQUARE_BRACKET_RIGHT);
 
                 if (dim_cnt >= dim_cap) {
                     dim_cap *= 2;
                     dim_sizes = realloc(dim_sizes, sizeof(int) * dim_cap);
+                    dim_exprs = realloc(dim_exprs, sizeof(ASTNode*) * dim_cap);
+                    if (!dim_sizes || !dim_exprs) OUT_OF_MEMORY();
                 }
-                dim_sizes[dim_cnt++] = size;
+                dim_sizes[dim_cnt] = size;
+                dim_exprs[dim_cnt] = expr;
+                dim_cnt++;
             }
 
             AST_NewArray* newArr = calloc(1, sizeof(AST_NewArray));
@@ -2365,6 +2551,7 @@ static ASTNode* parser_primary(Parser* parser)
             newArr->elementType = elemType;
             newArr->dim_count = dim_cnt;
             newArr->dim_sizes = dim_sizes;
+            newArr->dim_exprs = dim_exprs;
             return (ASTNode*)newArr;
         }
         else if (parser_current_is_type(parser, TOKEN_IDENTIFIER)) {
@@ -2432,10 +2619,11 @@ static ASTNode* parser_primary(Parser* parser)
                 lit->base.value = (Token){strdup("0"), TOKEN_NUMBER,
                                            parser->current.line, parser->current.column};
             }
+        } else
+        {
+            lit->base.value = parser->current;
         }
 
-        lit->base.value = parser->current;
-        lit->base.value = parser->current;
         lit->dataType = Get_Datatype(parser->current.type);
         lit->internal_name = NULL;
         lit->is_call_function = false;
@@ -3642,9 +3830,16 @@ void AST_Free(ASTNode* node)
         }
 
         case AST_NEW_ARRAY: {
-            AST_NewArray* narr = (AST_NewArray*)node;
-            if (narr->dim_sizes) { free(narr->dim_sizes); narr->dim_sizes = NULL; }
-            break;
+                AST_NewArray* narr = (AST_NewArray*)node;
+                if (narr->dim_sizes) { free(narr->dim_sizes); narr->dim_sizes = NULL; }
+                if (narr->dim_exprs) {
+                    for (int i = 0; i < narr->dim_count; i++) {
+                        if (narr->dim_exprs[i]) AST_Free(narr->dim_exprs[i]);
+                    }
+                    free(narr->dim_exprs);
+                    narr->dim_exprs = NULL;
+                }
+                break;
         }
 
         case AST_INIT_LIST: {

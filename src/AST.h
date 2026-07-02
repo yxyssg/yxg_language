@@ -81,6 +81,9 @@ typedef struct AST_LITERAL
 
     bool is_field_ref;
     int  field_offset;
+
+    bool returns_array;
+    int  return_total_bytes;
 }AST_Literal;
 
 typedef struct AST_BINARY
@@ -128,6 +131,7 @@ typedef struct AST_NEW_ARRAY {
     DataType elementType;
     int dim_count;
     int* dim_sizes;
+    ASTNode** dim_exprs;
 } AST_NewArray;
 
 typedef struct AST_INIT_LIST {
@@ -285,6 +289,10 @@ typedef struct AST_FUNCTION
 
     AST_Return* Return;
     int return_Count;
+    bool    returns_array;
+    DataType return_element_type;
+    int     return_dim_count;
+    int*    return_dim_sizes;
     int Modifier; //0:pub,1:pro,2:pri
 }AST_Function;
 
