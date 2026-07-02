@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-01f15b5b.js";
+            window.path_to_searchindex_js = "../searchindex-089743c3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-5b7e1585.js"></script>
@@ -357,7 +357,7 @@ class LinkedList {
     }
 
     // 打印链表
-    pub void print() {
+    pub void printList() {
         if head == null {
             print "链表为空";
             return;
@@ -384,7 +384,7 @@ int main() {
     list.append(30);
     list.prepend(5);
     list.insert(2, 15);
-    list.print();
+    list.printList();
     print "链表长度:", list.getSize();
 
     print "";
@@ -398,17 +398,17 @@ int main() {
     print "=== 删除元素 ===";
     list.removeAt(2);
     print "删除索引 2 后:";
-    list.print();
+    list.printList();
 
     list.remove(20);
     print "删除值 20 后:";
-    list.print();
+    list.printList();
 
     print "";
     print "=== 反转链表 ===";
     list.reverse();
     print "反转后:";
-    list.print();
+    list.printList();
 
     print "";
     print "=== 最终状态 ===";
