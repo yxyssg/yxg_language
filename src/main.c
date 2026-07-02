@@ -507,7 +507,8 @@ int main(int argc, char** argv)
     {
         system(output_file_name);
     }
-    // remove("output.asm");
+    
+    remove("output.asm");
     remove("output.obj");
     remove("runtime_print.obj");
     remove("runtime_string.obj");

@@ -22,13 +22,13 @@ bool has_input = false;
 bool has_system_lib = false;
 bool has_gc = false;
 
-static char* current_function = NULL;
-static int current_param_offset = 8;
-static int current_param_index = 0;
-static bool in_function = false;
-static int current_local_offset = 0;
-static SpillSlot spill_slots[MAX_SPILL_SLOTS];
-static int spill_count = 0;
+char* current_function = NULL;
+int current_param_offset = 8;
+int current_param_index = 0;
+bool in_function = false;
+int current_local_offset = 0;
+SpillSlot spill_slots[MAX_SPILL_SLOTS];
+int spill_count = 0;
 
 int const_i = 0;
 int buffer_i = 0;
