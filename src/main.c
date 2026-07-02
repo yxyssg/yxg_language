@@ -234,7 +234,7 @@ int main(int argc, char** argv)
             while (full_ir_tail->next) full_ir_tail = full_ir_tail->next;
             continue;
         }
-        // printf("\n¨X¨T¨T º¯Êý: %s ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨[\n",
+        // printf("\nï¿½Xï¿½Tï¿½T ï¿½ï¿½ï¿½ï¿½: %s ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½[\n",
         //        fi->func_name ? fi->func_name : "(unnamed)");
         CFG* cfg = cfg_build(fi->first_ir, fi->last_ir);
         if (!cfg) continue;
@@ -279,7 +279,7 @@ int main(int argc, char** argv)
             full_ir_tail = func_ir;
             while (full_ir_tail->next) full_ir_tail = full_ir_tail->next;
         }
-        // printf("¨^¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨a\n\n");
+        // printf("ï¿½^ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½a\n\n");
     }
     func_ir_list_free(func_list);
 
@@ -306,7 +306,7 @@ int main(int argc, char** argv)
 
     if (has_print)
     {
-        if (system("nasm -g -f win32 -O0 runtime_print.asm -o runtime_print.obj") != 0)
+        if (system("nasm -g -f win32 -O0 runtime/runtime_print.asm -o runtime_print.obj") != 0)
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -316,7 +316,7 @@ int main(int argc, char** argv)
     }
     if (has_gc)
     {
-        if (system("nasm -g -f win32 -O0 runtime_gc.asm -o runtime_gc.obj") != 0)
+        if (system("nasm -g -f win32 -O0 runtime/runtime_gc.asm -o runtime_gc.obj") != 0)
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -326,7 +326,7 @@ int main(int argc, char** argv)
     }
     if (has_string_lib)
     {
-        if (system("nasm -g -f win32 -O0 runtime_string.asm -o runtime_string.obj") != 0)
+        if (system("nasm -g -f win32 -O0 runtime/runtime_string.asm -o runtime_string.obj") != 0)
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -336,7 +336,7 @@ int main(int argc, char** argv)
     }
     if (has_memory_lib)
     {
-        if (system("nasm -g -f win32 -O0 runtime_memory.asm -o runtime_memory.obj"))
+        if (system("nasm -g -f win32 -O0 runtime/runtime_memory.asm -o runtime_memory.obj"))
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -346,7 +346,7 @@ int main(int argc, char** argv)
     }
     if (has_float_lib)
     {
-        if (system("nasm -g -f win32 -O0 runtime_float.asm -o runtime_float.obj"))
+        if (system("nasm -g -f win32 -O0 runtime/runtime_float.asm -o runtime_float.obj"))
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -356,7 +356,7 @@ int main(int argc, char** argv)
     }
     if (has_array_lib)
     {
-        if (system("nasm -g -f win32 -O0 runtime_array.asm -o runtime_array.obj"))
+        if (system("nasm -g -f win32 -O0 runtime/runtime_array.asm -o runtime_array.obj"))
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -366,7 +366,7 @@ int main(int argc, char** argv)
     }
     if (main_has_args || has_input || has_format || has_system_lib)
     {
-        if (system("nasm -g -f win32 -O0 runtime_system.asm -o runtime_system.obj"))
+        if (system("nasm -g -f win32 -O0 runtime/runtime_system.asm -o runtime_system.obj"))
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
@@ -376,7 +376,7 @@ int main(int argc, char** argv)
     }
     if (has_bounds_check)
     {
-        if (system("nasm -g -f win32 -O0 runtime_bounds.asm -o runtime_bounds.obj"))
+        if (system("nasm -g -f win32 -O0 runtime/runtime_bounds.asm -o runtime_bounds.obj"))
         {
             clock_t end_time = clock();
             double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
