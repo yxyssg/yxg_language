@@ -10,7 +10,6 @@
     import yxg.Math;
     import yxg.System;
 
-    // 操作类型枚举
     enum Operation {
         ADD = 1,
         SUB = 2,
@@ -18,7 +17,6 @@
         DIV = 4
     }
 
-    // 计算器类
     class Calculator {
         pri float memory;
         pri int opCount;
@@ -87,7 +85,6 @@
         }
     }
 
-    // 显示菜单
     void showMenu() {
         print "";
         print "========== YXG 计算器 ==========";
@@ -106,54 +103,54 @@
         print "请选择操作:";
     }
 
-    // 读取两个操作数
-    void readTwoOperands(float a, float b) {
-        print "请输入第一个数:";
-        input "%f", &a;
-        print "请输入第二个数:";
-        input "%f", &b;
-    }
-
-    // 读取一个操作数
-    void readOneOperand(float x) {
-        print "请输入数值:";
-        input "%f", &x;
-    }
-
     int main() {
         Calculator calc = new Calculator();
-        String str = new String();
-        System sys = new System();
 
         bool running = true;
         float a, b, result;
         int choice;
 
+        a = 0.0;
+        b = 0.0;
+        choice = 0;
+
         while running {
             showMenu();
-            input "%d", &choice;
+            input("{}", &choice);
 
             switch choice {
                 case 1:
-                    readTwoOperands(a, b);
+                    print "请输入第一个数:";
+                    input("{}", &a);
+                    print "请输入第二个数:";
+                    input("{}", &b);
                     result = calc.add(a, b);
                     print a, " + ", b, " = ", result;
                     break;
 
                 case 2:
-                    readTwoOperands(a, b);
+                    print "请输入第一个数:";
+                    input("{}", &a);
+                    print "请输入第二个数:";
+                    input("{}", &b);
                     result = calc.sub(a, b);
                     print a, " - ", b, " = ", result;
                     break;
 
                 case 3:
-                    readTwoOperands(a, b);
+                    print "请输入第一个数:";
+                    input("{}", &a);
+                    print "请输入第二个数:";
+                    input("{}", &b);
                     result = calc.mul(a, b);
                     print a, " * ", b, " = ", result;
                     break;
 
                 case 4:
-                    readTwoOperands(a, b);
+                    print "请输入第一个数:";
+                    input("{}", &a);
+                    print "请输入第二个数:";
+                    input("{}", &b);
                     result = calc.div(a, b);
                     if b != 0.0 {
                         print a, " / ", b, " = ", result;
@@ -163,15 +160,16 @@
                 case 5:
                     int base, exp;
                     print "请输入底数:";
-                    input "%d", &base;
+                    input("{}", &base);
                     print "请输入指数:";
-                    input "%d", &exp;
+                    input("{}", &exp);
                     result = calc.power(base, exp);
                     print base, " ^ ", exp, " = ", result;
                     break;
 
                 case 6:
-                    readOneOperand(a);
+                    print "请输入数值:";
+                    input("{}", &a);
                     if a >= 0.0 {
                         result = calc.sqrt(a);
                         print "sqrt(", a, ") = ", result;
@@ -182,7 +180,7 @@
 
                 case 7:
                     print "请输入要存储的值:";
-                    input "%f", &a;
+                    input("{}", &a);
                     calc.store(a);
                     break;
 

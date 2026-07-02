@@ -185,7 +185,7 @@
         }
 
         // 打印链表
-        pub void print() {
+        pub void printList() {
             if head == null {
                 print "链表为空";
                 return;
@@ -212,7 +212,7 @@
         list.append(30);
         list.prepend(5);
         list.insert(2, 15);
-        list.print();
+        list.printList();
         print "链表长度:", list.getSize();
 
         print "";
@@ -226,17 +226,17 @@
         print "=== 删除元素 ===";
         list.removeAt(2);
         print "删除索引 2 后:";
-        list.print();
+        list.printList();
 
         list.remove(20);
         print "删除值 20 后:";
-        list.print();
+        list.printList();
 
         print "";
         print "=== 反转链表 ===";
         list.reverse();
         print "反转后:";
-        list.print();
+        list.printList();
 
         print "";
         print "=== 最终状态 ===";
