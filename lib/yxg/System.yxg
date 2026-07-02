@@ -1,0 +1,70 @@
+// ============================================================
+// yxg.System 标准库
+// 提供程序控制、命令行参数、系统调用、时间及环境变量等操作系统接口。
+//
+// yxg.System Standard Library
+// Provides OS‑interaction utilities such as program control, command‑line
+// arguments, system calls, timing and environment variables.
+// ============================================================
+
+pub class System {
+    // ==================== 程序控制 / Program control ====================
+    /// 终止程序并返回指定的退出码。
+    /// @param code 退出码，通常 0 表示正常退出，非 0 表示异常 / exit code
+    pub void exit(int code) {
+        _system_exit(code);
+    }
+
+    // ==================== 命令行参数 / Command‑line arguments ====================
+    /// 返回命令行参数的个数（包括程序名本身）。
+    /// @return 参数个数 / number of arguments
+    pub int argc() {
+        return _GetCommandLineArgc();
+    }
+
+    /// 返回第 index 个命令行参数，索引从 0 开始。
+    /// @param index 参数索引（0 为程序名） / argument index (0 = program name)
+    /// @return 对应的命令行参数字符串 / the argument string
+    pub string argv(int index) {
+        return _sys_argv_at(index);
+    }
+
+    /// 打印所有命令行参数，主要用于调试。
+    /// Prints all command‑line arguments, mainly for debugging.
+    pub void printArgs() {
+        int n = argc();
+        print "argc = ", n, "\n";
+        for int i = 0; i < n; ++i {
+            print "argv[", i, "] = \"", argv(i), "\"\n";
+        }
+    }
+
+    // ==================== 系统命令 / System command ====================
+    /// 调用操作系统执行指定的命令字符串。
+    /// @param cmd 要执行的命令 / command to execute
+    /// @return 命令执行后的退出码 / exit code of the command
+    pub int system(string cmd) {
+        return _system_call(cmd);
+    }
+
+    // ==================== 时间 / Time ====================
+    /// 返回当前系统时间（自 Unix 纪元以来的秒数）。
+    /// @return 当前时间戳 / current timestamp in seconds
+    pub int time() {
+        return _system_time();
+    }
+
+    /// 让程序暂停执行指定的毫秒数。
+    /// @param ms 暂停的毫秒数 / milliseconds to sleep
+    pub void sleep(int ms) {
+        _system_sleep(ms);
+    }
+
+    // ==================== 环境变量 / Environment variables ====================
+    /// 获取指定名称的环境变量值。
+    /// @param name 环境变量名 / name of the environment variable
+    /// @return 环境变量的值，若不存在则返回空字符串 / value of the variable, or empty string if not found
+    pub string env(string name) {
+        return _system_getenv(name);
+    }
+}
