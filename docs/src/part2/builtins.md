@@ -39,14 +39,14 @@ YXG 编译器预注册了一系列运行时函数，无需 import 即可直接�
 
 ### input
 
-从控制台读取格式化输入，类似 C 语言的 scanf：
+从控制台读取输入。使用 {} 作为占位符，变量需用 & 取地址：
 
     int main() {
         int age;
         string name;
 
         print "请输入姓名和年龄:";
-        input "%s %d", &name, &age;
+        input("{}{}", &name, &age);
 
         print "姓名:", name;
         print "年龄:", age;
@@ -54,19 +54,16 @@ YXG 编译器预注册了一系列运行时函数，无需 import 即可直接�
         return 0;
     }
 
-input 的第一个参数是格式字符串，后续参数是需要读取的变量地址（使用 & 取地址）。
+input 的第一个参数是格式字符串，{} 按顺序对应后面的变量地址。支持的类型包括 int、float、char、string、bool。
 
 ## 字符串格式化
 
 ### format
 
-格式化字符串并返回结果：
+格式化字符串并返回结果。使用 {} 作为占位符，按顺序填充参数：
 
     int main() {
-        string name = "Alice";
-        int age = 25;
-
-        string result = format("姓名: %s, 年龄: %d", name, age);
+        string result = format("姓名:{}, 年龄:{}", "Alice", 25);
         print result;
 
         return 0;
@@ -74,7 +71,46 @@ input 的第一个参数是格式字符串，后续参数是需要读取的变�
 
 输出：
 
-    姓名: Alice, 年龄: 25
+    姓名:Alice, 年龄:25
+
+任何类型均可自动填入 {}：
+
+    print format("金币:{}", 100.5);
+    print format("等级:{}", "A");
+    print format("在线:{}", true);
+
+格式控制（在 {} 内用 : 后接格式说明符）：
+
+指定进制输出（参数需为整数）：
+
+    print format("{:x}", 255);      // ff（十六进制小写）
+    print format("{:X}", 255);      // FF（十六进制大写）
+    print format("{:o}", 255);      // 377（八进制）
+    print format("{:b}", 255);      // 11111111（二进制）
+    print format("{:d}", 255);      // 255（十进制）
+
+浮点数精度控制：
+
+    print format("{:.2f}", 3.14159);   // 3.14
+    print format("{:.0f}", 3.14159);   // 3
+    print format("{:.6f}", 3.0);       // 3.000000
+
+定宽零填充整数：
+
+    print format("{:04d}", 7);         // 0007
+    print format("{:08x}", 255);       // 000000ff
+    print format("{:08X}", 255);       // 000000FF
+    print format("{:08b}", 5);         // 00000101
+
+转义花括号（连续两个花括号表示字面花括号）：
+
+    print format("{{}}是占位符");       // {}是占位符
+    print format("A{}B", 1);           // A1B
+
+综合示例：
+
+    print format("价格:{:.1f} 编号:{:07d}", 99.95, 42);
+    // 输出: 价格:100.0 编号:0000042
 
 ## 字符串操作函数
 
