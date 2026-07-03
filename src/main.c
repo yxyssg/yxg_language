@@ -158,7 +158,7 @@ int main(int argc, char** argv)
             if (strcmp(argv[i], "-o") == 0) i++;
             continue;
         }
-        char* src = read_source(argv[1]);
+        char* src = read_source(argv[i]);
         if (!src) {
             ERROR(ERR_PARSE_MODULE_NOT_FOUND, LOC(argv[i], 0, 0), "cannot read '%s'", argv[i]);
             continue;
@@ -206,7 +206,7 @@ int main(int argc, char** argv)
         clock_t end_time = clock();
         double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
         fprintf(stderr,"BUILD FAILED in %.6fs\n",elapsed_time);
-        // AST_Free(ast_node);
+        AST_Free(ast_node);
         for (int i = 0; i < lexer_count; i++) lexer_free(lexer_instances[i]);
         module_system_cleanup();
         semantics_cleanup();
@@ -234,8 +234,6 @@ int main(int argc, char** argv)
             while (full_ir_tail->next) full_ir_tail = full_ir_tail->next;
             continue;
         }
-        // printf("\n�X�T�T ����: %s �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�[\n",
-        //        fi->func_name ? fi->func_name : "(unnamed)");
         CFG* cfg = cfg_build(fi->first_ir, fi->last_ir);
         if (!cfg) continue;
 
@@ -279,7 +277,6 @@ int main(int argc, char** argv)
             full_ir_tail = func_ir;
             while (full_ir_tail->next) full_ir_tail = full_ir_tail->next;
         }
-        // printf("�^�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�a\n\n");
     }
     func_ir_list_free(func_list);
 
