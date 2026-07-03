@@ -167,7 +167,7 @@ main.yxg：
     int main() {
         float r = math.sqrt(16.0);
         string s = string.toUpper("hello");
-        print(r, s);
+        print r, s;
         return 0;
     }
 

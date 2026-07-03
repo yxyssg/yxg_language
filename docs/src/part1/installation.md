@@ -167,7 +167,7 @@ YXG 编译器目前仅支持 Windows 平台，需要以下工具链：
 创建一个测试文件 hello.yxg：
 
     int main() {
-        print("Hello, YXG!");
+        print "Hello, YXG!";
         return 0;
     }
 

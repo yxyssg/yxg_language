@@ -73,10 +73,10 @@
     }
 
     // 至少执行一次 → do-while
-    int input;
+    int Input;
     do {
-        input = 5;
-    } while input < 0 || input > 100;
+        Input = 5;
+    } while Input < 0 || Input > 100;
 
 ## break 与 continue
 

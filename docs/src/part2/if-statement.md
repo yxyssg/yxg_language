@@ -178,16 +178,16 @@ if 语句可以嵌套：
 
     int main() {
         String str = new String();
-        string input = "admin";
+        string Input = "admin";
 
-        if input == "" {
+        if Input == "" {
             print "输入不能为空";
-        } else if str.len(input) < 3 {
+        } else if str.len(Input) < 3 {
             print "输入太短";
-        } else if str.len(input) > 20 {
+        } else if str.len(Input) > 20 {
             print "输入太长";
         } else {
-            print "输入有效:", input;
+            print "输入有效:", Input;
         }
 
         return 0;
