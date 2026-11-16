@@ -49,25 +49,7 @@
     }
 
 ## 创建和使用对象
-
-YXG 中有两种创建对象的方式：
-
-### 无构造函数时直接声明
-
-    class Simple {
-        int value;
-        string name;
-    }
-
-    int main() {
-        Simple s;
-        s.value = 42;
-        s.name = "test";
-        print s.value, s.name;
-        return 0;
-    }
-
-### 有构造函数时使用 new
+使用 new 来创建
 
     class Point {
         int x;
