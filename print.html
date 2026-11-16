@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c8fe9131.js";
+            window.path_to_searchindex_js = "searchindex-0eb99d18.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-5b7e1585.js"></script>
@@ -4321,22 +4321,7 @@ int main() {
 }
 </code></pre>
 <h2 id="创建和使用对象"><a class="header" href="#创建和使用对象">创建和使用对象</a></h2>
-<p>YXG 中有两种创建对象的方式：</p>
-<h3 id="无构造函数时直接声明"><a class="header" href="#无构造函数时直接声明">无构造函数时直接声明</a></h3>
-<pre><code>class Simple {
-    int value;
-    string name;
-}
-
-int main() {
-    Simple s;
-    s.value = 42;
-    s.name = "test";
-    print s.value, s.name;
-    return 0;
-}
-</code></pre>
-<h3 id="有构造函数时使用-new"><a class="header" href="#有构造函数时使用-new">有构造函数时使用 new</a></h3>
+<p>使用 new 来创建</p>
 <pre><code>class Point {
     int x;
     int y;
