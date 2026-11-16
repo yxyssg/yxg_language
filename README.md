@@ -3,10 +3,10 @@
 [![License](https://img.shields.io/badge/license-Apache-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/yxyssg/yxg_language/releases)
 
-我将会在年底发布yxg 2.0 版本，尽情期待
+yxg 2.0 is coming, look forward to it!
+yxg 2.0 版本将要来临，尽情期待
 
 Want to read the document? Click here
-
 想阅读文档？点击这里
 https://yxyssg.github.io/yxg_language/
 
